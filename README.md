@@ -114,7 +114,7 @@ USE_AI_LAYER=true LLM_PROVIDER=gemini BURN_SUBTITLES=false python main.py --inpu
 
 ### Nota importante sobre los defaults
 
-Los valores por defecto (`CLIP_TARGET_DURATION=40`, `MIN_GAP_SECONDS=45`, etc.) están calibrados para un **directo de ~1 hora**. Si pruebas con un video corto (unos pocos minutos), es probable que se generen menos clips de los que pediste con `--num-clips`, porque no hay espacio suficiente para encontrar picos separados por esa distancia. Para videos cortos, reduce esos valores, por ejemplo:
+Los valores por defecto (`CLIP_TARGET_DURATION=40`, `MIN_GAP_SECONDS=45`, `NUM_CLIPS=8`, etc.) están calibrados para un **directo de 1-4 horas**. Si pruebas con un video corto (unos pocos minutos), es probable que se generen menos clips de los que pediste con `--num-clips`, porque no hay espacio suficiente para encontrar picos separados por esa distancia. Para videos cortos, reduce esos valores, por ejemplo:
 
 ```bash
 CLIP_TARGET_DURATION=10 MIN_GAP_SECONDS=5 PEAK_PROMINENCE=0.02 \
