@@ -1,29 +1,77 @@
 # clipengine
 
-Pipeline propio y gratuito que recibe un video (link de YouTube o archivo local) y genera automáticamente clips verticales (9:16) a partir de los momentos de mayor energía de audio (subidas de intensidad musical, aplausos/vítores). La capa de IA (transcripción + LLM) es **opcional**: el pipeline funciona de punta a punta sin ella, y mejora títulos/selección/subtítulos si se activa. Ver `CLAUDE.md` para la propuesta completa de arquitectura y las fases futuras (señal de chat en standby, seguimiento visual, capa de revisión).
+## Propósito
+
+**clipengine** es un pipeline gratuito que recibe un video (link de YouTube o archivo local) — pensado sobre todo para **directos musicales de entre 1-4 horas** — y genera automáticamente varios clips verticales (9:16) listos para TikTok/Reels/Shorts, a partir de los momentos de mayor energía de audio (subidas de intensidad musical, aplausos, vítores).
+
+Replica lo que hacen herramientas como OpusClip/Vizard/Klap, pero:
+- **gratis en su núcleo**: el análisis de señal (energía + aplausos) corre 100% local, sin llamar a ningún servicio pago.
+- **la capa de IA es opcional**: transcripción (Whisper) + LLM (Gemini) para mejorar títulos, selección de momentos y subtítulos quemados — se activa con un flag, y si falla por cualquier motivo (sin API key, sin red, respuesta inválida) el pipeline **nunca se rompe**: cae de vuelta al comportamiento sin IA automáticamente.
+
+Ver `CLAUDE.md` para la propuesta completa de arquitectura y las fases futuras (señal de chat en standby, seguimiento visual, capa de revisión).
 
 - **Fase 1 — núcleo sin IA**: implementada.
-- **Fase 2 — capa de IA opcional (Gemini)**: implementada.
+- **Fase 2 — capa de IA opcional (transcripción con Whisper + Gemini)**: implementada.
 
 ## Requisitos
 
-- Python 3.12+ (probado en 3.14)
-- [ffmpeg](https://ffmpeg.org/) y `ffprobe` instalados y en el `PATH` (`brew install ffmpeg` en macOS)
+- Python 3.12 o superior (probado en 3.14)
+- [ffmpeg](https://ffmpeg.org/) y `ffprobe` instalados y accesibles desde la terminal (`ffmpeg -version` debe funcionar)
+- `git` (para clonar el repositorio)
 
-## Instalación
+## Instalación desde cero
 
-```bash
-python3.14 -m venv .venv
-source .venv/bin/activate
-pip install --upgrade pip
-pip install -e ".[dev]"
-```
+### macOS
 
-Para usar la capa de IA (Fase 2, opcional) instala también el extra `ai` (`faster-whisper` + `google-genai`):
+1. **Python** (si no lo tenés, o tenés una versión anterior a 3.12), vía [Homebrew](https://brew.sh/):
+   ```bash
+   brew install python@3.13
+   ```
+2. **ffmpeg**:
+   ```bash
+   brew install ffmpeg
+   ```
+3. **Clonar el repo y crear el entorno virtual**:
+   ```bash
+   git clone <url-del-repo>
+   cd long-videos-to-shorts
+   python3 -m venv .venv
+   source .venv/bin/activate
+   pip install --upgrade pip
+   pip install -e ".[dev]"
+   ```
+
+### Windows
+
+1. **Python**: descargá el instalador desde [python.org/downloads](https://www.python.org/downloads/) y marcá la casilla **"Add python.exe to PATH"** durante la instalación — o, con `winget` desde PowerShell:
+   ```powershell
+   winget install Python.Python.3.13
+   ```
+2. **ffmpeg**, con `winget`:
+   ```powershell
+   winget install Gyan.FFmpeg
+   ```
+   Cerrá y volvé a abrir la terminal para que el `PATH` se actualice, y verificá con `ffmpeg -version`. Si `winget` no está disponible, descargá un build desde [gyan.dev/ffmpeg/builds](https://www.gyan.dev/ffmpeg/builds/) y agregá su carpeta `bin` al `PATH` manualmente.
+3. **Clonar el repo y crear el entorno virtual** (PowerShell):
+   ```powershell
+   git clone <url-del-repo>
+   cd long-videos-to-shorts
+   python -m venv .venv
+   .venv\Scripts\Activate.ps1
+   pip install --upgrade pip
+   pip install -e ".[dev]"
+   ```
+   Si PowerShell bloquea la activación del entorno virtual (error de política de ejecución), corré una vez: `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
+
+### Capa de IA opcional (Fase 2, cualquier sistema operativo)
+
+Para usar transcripción + Gemini instalá también el extra `ai` (`faster-whisper` + `google-genai`):
 
 ```bash
 pip install -e ".[ai,dev]"
 ```
+
+Ver la sección [Capa de IA opcional (Fase 2)](#capa-de-ia-opcional-fase-2) más abajo para configurar la `GEMINI_API_KEY` y las variables relacionadas.
 
 ## Uso
 
@@ -53,6 +101,8 @@ USE_AI_LAYER=true LLM_PROVIDER=gemini python main.py --input "<url_con_voz>" --o
 ```
 
 El título/razón generados por Gemini quedan en `metadata.json` (campos `title`/`reason`), **no** en el nombre del archivo — los `.mp4` siempre se llaman `clip_01.mp4`, `clip_02.mp4`, etc., sea cual sea el resultado de la IA.
+
+**Idioma de la transcripción**: por defecto `WHISPER_LANGUAGE=es`, así Whisper no intenta autodetectar el idioma — algo que puede fallar en directos musicales, porque la autodetección solo mira los primeros ~30s de audio y si ahí hay un intro instrumental o aplausos sin habla clara, puede adivinar mal (ej. transcribir todo en inglés). Si el grupo canta/habla en otro idioma, ajustá `WHISPER_LANGUAGE` (ej. `en`, `fr`) o poné `WHISPER_LANGUAGE=auto` para volver a la autodetección. El título/razón de Gemini, en cambio, siempre se generan en español sin importar `WHISPER_LANGUAGE` ni el idioma real de la transcripción (ver `llm/prompt.py`).
 
 Si falta la API key, `google-genai`/`faster-whisper` no están instalados, hay un error de red, o el LLM devuelve algo inválido, el pipeline **no se rompe**: cae de vuelta al comportamiento de Fase 1 (señal pura + título genérico) y avisa por stderr. La IA es una mejora, nunca una dependencia dura.
 
@@ -168,6 +218,14 @@ Si los clips no caen donde esperarías, ajusta `ENERGY_WEIGHT`, `APPLAUSE_WEIGHT
 
 Si `ffmpeg`/`ffprobe` fallan (descarga, extracción de audio o recorte), la excepción incluye el **stderr real del proceso**, no solo el código de salida — revisa el mensaje completo de la excepción antes de asumir que es un bug del pipeline; casi siempre describe la causa (códec no soportado, archivo corrupto, parámetro inválido, etc.).
 
-**Subtítulos quemados no aparecen aunque `USE_AI_LAYER=true` funcionó bien**: primero confirma que no los desactivaste con `BURN_SUBTITLES=false`. Si no fue eso, es probable que sea el filtro `subtitles` de ffmpeg, que requiere que el binario esté compilado con `libass`. El `ffmpeg` estándar de Homebrew **no** lo incluye por defecto (verifica con `ffmpeg -filters | grep subtitles`); si no aparece nada, instala una build con soporte (`brew install ffmpeg-full` o equivalente). Mientras tanto, el pipeline detecta el fallo de ffmpeg al quemar subtítulos y **reintenta automáticamente el clip sin ellos** — no se rompe, pero `has_subtitles` en `metadata.json` reflejará `false` para esos clips aunque sí hubiera transcripción disponible.
+**Subtítulos quemados no aparecen aunque `USE_AI_LAYER=true` funcionó bien**: primero confirma que no los desactivaste con `BURN_SUBTITLES=false`. Si no fue eso, es probable que sea el filtro `subtitles` de ffmpeg, que requiere que el binario esté compilado con `libass`. La fórmula estándar `ffmpeg` de Homebrew **no** lo incluye (verifica con `ffmpeg -filters | grep subtitles`; si no aparece nada, confirmado). En macOS, la forma de conseguir un build con soporte es el tap `homebrew-ffmpeg/ffmpeg-full` (no existe una fórmula `ffmpeg-full` suelta en `homebrew-core`):
+
+```bash
+brew tap homebrew-ffmpeg/ffmpeg
+brew install homebrew-ffmpeg/ffmpeg-full/ffmpeg-full
+brew link --overwrite ffmpeg-full
+```
+
+Mientras tanto, el pipeline detecta el fallo de ffmpeg al quemar subtítulos y **reintenta automáticamente el clip sin ellos** — no se rompe, pero `has_subtitles` en `metadata.json` reflejará `false` para esos clips aunque sí hubiera transcripción disponible.
 
 **La IA no mejora nada y los títulos siguen siendo genéricos**: revisa el mensaje de aviso en stderr (`[clipengine] Aviso: ...`) — casi siempre es `GEMINI_API_KEY` no configurada, `google-genai`/`faster-whisper` no instalados (`pip install -e ".[ai]"`), o el LLM devolvió una respuesta que no se pudo parsear como JSON. En cualquier caso `ai_enhanced` queda en `false` en el JSON, y eso es el comportamiento esperado de degradación, no un error a corregir.

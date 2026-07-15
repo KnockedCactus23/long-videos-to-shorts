@@ -15,8 +15,10 @@ Se te da la transcripción completa y una lista de candidatos ya detectados por 
 de energía de audio (id, start, end en segundos, score).
 
 Elige como máximo {num_clips} candidatos de la lista (usa solo los ids dados, no inventes
-timestamps). Para cada uno da: título/hook corto (máx 80 caracteres, mismo idioma que la
-transcripción) y una razón breve (1 frase). Ordénalos de más a menos interesante.
+timestamps). Para cada uno da: título/hook corto (máx 80 caracteres) y una razón breve
+(1 frase). Escribe el título y la razón SIEMPRE EN ESPAÑOL, sin importar el idioma de la
+transcripción o de la letra de las canciones (puede haber partes en otros idiomas, pero tu
+respuesta debe ser en español). Ordénalos de más a menos interesante.
 
 Responde ÚNICAMENTE con JSON válido, sin texto adicional ni bloques de código, con esta forma:
 [{{"candidate_id": 0, "title": "...", "reason": "..."}}, ...]

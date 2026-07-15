@@ -23,6 +23,11 @@ def _s(name: str, default: str) -> str:
     return os.getenv(name, default)
 
 
+def _lang(name: str, default: str) -> str | None:
+    value = os.getenv(name, default).strip()
+    return None if value.lower() in ("", "auto") else value
+
+
 @dataclass
 class ClipConfig:
     clip_min_duration: float = field(default_factory=lambda: _f("CLIP_MIN_DURATION", 20))
@@ -49,6 +54,9 @@ class ClipConfig:
     whisper_model_size: str = field(default_factory=lambda: _s("WHISPER_MODEL_SIZE", "small"))
     whisper_device: str = field(default_factory=lambda: _s("WHISPER_DEVICE", "cpu"))
     whisper_compute_type: str = field(default_factory=lambda: _s("WHISPER_COMPUTE_TYPE", "int8"))
+    # Idioma fijo para la transcripción (evita que Whisper autodetecte mal el idioma a
+    # partir de un intro instrumental/aplausos sin habla). "auto" o vacío = autodetectar.
+    whisper_language: str | None = field(default_factory=lambda: _lang("WHISPER_LANGUAGE", "es"))
     gemini_model: str = field(default_factory=lambda: _s("GEMINI_MODEL", "gemini-2.5-flash"))
     llm_timeout_seconds: float = field(default_factory=lambda: _f("LLM_TIMEOUT_SECONDS", 120))
     ai_candidate_pool_multiplier: int = field(default_factory=lambda: _i("AI_CANDIDATE_POOL_MULTIPLIER", 3))

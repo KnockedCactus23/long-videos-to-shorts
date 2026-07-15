@@ -7,7 +7,8 @@ class _FakeWhisperModelSuccess:
     def __init__(self, model_size, device=None, compute_type=None):
         pass
 
-    def transcribe(self, path):
+    def transcribe(self, path, language=None):
+        self.last_language = language
         segments = [
             SimpleNamespace(start=0.0, end=2.0, text=" hola "),
             SimpleNamespace(start=2.5, end=5.0, text="mundo"),
@@ -20,7 +21,7 @@ class _FakeWhisperModelRaises:
     def __init__(self, model_size, device=None, compute_type=None):
         pass
 
-    def transcribe(self, path):
+    def transcribe(self, path, language=None):
         raise RuntimeError("modelo corrupto")
 
 
@@ -45,3 +46,17 @@ def test_transcribe_audio_returns_none_on_exception(monkeypatch):
     monkeypatch.setattr(transcribe, "WhisperModel", _FakeWhisperModelRaises)
     result = transcribe.transcribe_audio("audio.wav", "small", "cpu", "int8")
     assert result is None
+
+
+def test_transcribe_audio_forwards_language_to_whisper(monkeypatch):
+    captured = {}
+
+    class _FakeWhisperModelCapturesLanguage(_FakeWhisperModelSuccess):
+        def transcribe(self, path, language=None):
+            captured["language"] = language
+            return super().transcribe(path, language=language)
+
+    monkeypatch.setattr(transcribe, "WhisperModel", _FakeWhisperModelCapturesLanguage)
+    transcribe.transcribe_audio("audio.wav", "small", "cpu", "int8", language="es")
+
+    assert captured["language"] == "es"

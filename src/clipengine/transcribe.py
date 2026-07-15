@@ -23,14 +23,19 @@ class Transcript:
     language: str | None = None
 
 
-def transcribe_audio(wav_path: Path, model_size: str, device: str, compute_type: str) -> Transcript | None:
+def transcribe_audio(
+    wav_path: Path, model_size: str, device: str, compute_type: str, language: str | None = None
+) -> Transcript | None:
     if WhisperModel is None:
         warn("faster-whisper no instalado; pip install -e '.[ai]'. Se omite la transcripción.")
         return None
 
     try:
         model = WhisperModel(model_size, device=device, compute_type=compute_type)
-        segments_iter, info = model.transcribe(str(wav_path))
+        # Si no se fija `language`, Whisper la autodetecta a partir de los primeros ~30s
+        # de audio — con directos musicales eso suele ser el intro instrumental/aplausos,
+        # sin habla clara, y puede hacer que adivine mal el idioma (ej. inglés por defecto).
+        segments_iter, info = model.transcribe(str(wav_path), language=language)
         segments = [
             TranscriptSegment(start=s.start, end=s.end, text=s.text.strip())
             for s in segments_iter

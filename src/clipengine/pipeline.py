@@ -44,7 +44,8 @@ def run_pipeline(input_source: str, config: ClipConfig) -> Path:
     transcript = None
     if config.use_ai_layer:
         transcript = transcribe_audio(
-            wav_path, config.whisper_model_size, config.whisper_device, config.whisper_compute_type
+            wav_path, config.whisper_model_size, config.whisper_device, config.whisper_compute_type,
+            config.whisper_language,
         )
 
         if transcript is not None:

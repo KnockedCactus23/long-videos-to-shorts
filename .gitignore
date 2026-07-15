@@ -8,3 +8,4 @@ output_manual_test/
 .env
 *.egg-info/
 .DS_Store
+output_test/

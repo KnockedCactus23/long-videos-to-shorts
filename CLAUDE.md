@@ -176,7 +176,7 @@ Lo que **no** se reutiliza de ese proyecto:
 ## 8. Fases de implementación sugeridas
 
 1. **Fase 1 — Núcleo sin IA** *(implementada)*: entrada, extracción de audio, análisis de energía/aplausos, fusión, recorte con FFmpeg, salida. Funciona de punta a punta sin ninguna llamada a un LLM.
-2. **Fase 2 — Capa de IA opcional** *(próxima fase a implementar)*: agregar Whisper + el adaptador de LLM (empezando por Gemini Flash y/o un modelo local vía Ollama, ver sección 4.2) detrás del flag `USE_AI_LAYER`, con generación de títulos/hooks y subtítulos. Otros proveedores (Claude, OpenAI, Groq) se agregan como opciones adicionales del mismo adaptador, sin cambiar el resto del sistema.
+2. **Fase 2 — Capa de IA opcional** *(implementada)*: Whisper (transcripción local) + adaptador de LLM intercambiable, detrás del flag `USE_AI_LAYER`, con generación de títulos/hooks, razones y subtítulos quemados. Implementación inicial solo con **Gemini** como proveedor (decisión explícita: se dejó Ollama fuera de esta fase). Ollama y otros proveedores (Claude, OpenAI, Groq) quedan como opciones futuras del mismo adaptador, sin cambiar el resto del sistema.
 3. **Fase 3 — Seguimiento visual (reencuadre dinámico)**: detectar y seguir a las personas en el plano (quién está hablando, el grupo completo) para mover el crop 9:16 dinámicamente según lo que ocurre en escena, en vez del crop centrado fijo de la Fase 1 — útil cuando el grupo/DJ no está centrado en el escenario.
 4. **Fase 4 — Capa de revisión**: interfaz en React/Supabase para ver los clips candidatos, sus scores/títulos, y aprobar/descartar antes de publicar.
 
