@@ -2,6 +2,8 @@ import json
 import subprocess
 from dataclasses import replace
 
+import pytest
+
 from clipengine import pipeline as pipeline_module
 from clipengine.candidates import RankedClip
 from clipengine.config import ClipConfig
@@ -168,3 +170,63 @@ def test_pipeline_falls_back_when_llm_raises(tmp_path, monkeypatch):
     for i, clip_meta in enumerate(metadata["clips"]):
         assert clip_meta["title"] == f"Momento destacado {i + 1}"
         assert clip_meta["ai_enhanced"] is False
+
+
+def test_pipeline_url_input_never_downloads_full_stream(tmp_path, monkeypatch):
+    """Con una URL, el pipeline nunca debe bajar el directo completo: primero baja
+    solo audio (una vez) para analizar, y recién después de elegir los clips finales
+    baja un rango de video por cada uno (nunca el archivo completo)."""
+    fixture_path = make_synthetic_media(tmp_path / "synthetic_concert.mp4", duration=180)
+    fake_url = "https://example.com/fake-live-stream"
+
+    audio_calls = []
+
+    def fake_download_audio_only(url, dest_dir):
+        audio_calls.append(url)
+        return fixture_path
+
+    segment_calls = []
+
+    def fake_download_video_segment(url, start, end, dest_path):
+        segment_calls.append((url, start, end))
+        return fixture_path
+
+    monkeypatch.setattr(pipeline_module, "download_audio_only", fake_download_audio_only)
+    monkeypatch.setattr(pipeline_module, "download_video_segment", fake_download_video_segment)
+
+    config = ClipConfig(
+        clip_min_duration=8,
+        clip_max_duration=15,
+        clip_target_duration=10,
+        num_clips=3,
+        min_gap_seconds=15,
+        peak_prominence=0.1,
+        energy_weight=0.7,
+        applause_weight=0.3,
+        sample_rate=16000,
+        output_width=270,
+        output_height=480,
+        crf=28,
+        work_dir=tmp_path / "work",
+        output_dir=tmp_path / "output",
+    )
+
+    output_dir = run_pipeline(fake_url, config)
+
+    # Solo una descarga de audio (para todo el análisis) y una descarga de video por
+    # cada clip final ya elegido — nunca una descarga del video completo.
+    assert audio_calls == [fake_url]
+    assert len(segment_calls) == 3
+    for call_url, start, end in segment_calls:
+        assert call_url == fake_url
+        assert end > start
+
+    clip_files = sorted(output_dir.glob("clip_*.mp4"))
+    assert len(clip_files) == 3
+
+    metadata = json.loads((output_dir / "metadata.json").read_text())
+    # metadata.json sigue reportando timestamps absolutos del directo original, no
+    # relativos al archivo parcial que se descargó por clip.
+    for clip_meta, (_, start, end) in zip(metadata["clips"], segment_calls):
+        assert clip_meta["start"] == pytest.approx(start, abs=0.01)
+        assert clip_meta["end"] == pytest.approx(end, abs=0.01)

@@ -1,3 +1,4 @@
+from dataclasses import replace
 from pathlib import Path
 
 from clipengine.audio_extract import extract_audio, probe_duration
@@ -6,7 +7,7 @@ from clipengine.config import ClipConfig
 from clipengine.energy import compute_energy_profile
 from clipengine.events import compute_applause_score
 from clipengine.fusion import find_local_peaks, fuse_signals, smooth
-from clipengine.ingest import resolve_input
+from clipengine.ingest import download_audio_only, download_video_segment, is_url, resolve_local_input
 from clipengine.llm.dispatcher import rank_and_title
 from clipengine.logging_utils import warn
 from clipengine.metadata import build_metadata, write_metadata
@@ -19,9 +20,14 @@ def run_pipeline(input_source: str, config: ClipConfig) -> Path:
     config.work_dir.mkdir(parents=True, exist_ok=True)
     config.output_dir.mkdir(parents=True, exist_ok=True)
 
-    local_path = resolve_input(input_source, config.work_dir)
-    duration = probe_duration(local_path)
-    wav_path = extract_audio(local_path, config.work_dir / "audio.wav", config.sample_rate)
+    remote = is_url(input_source)
+    # Para una URL, acá solo se baja el audio — nunca el directo completo. El video
+    # (siempre liviano: solo los rangos de los clips finales) se descarga más abajo,
+    # una vez que ya sabemos qué timestamps nos interesan.
+    source_for_analysis = download_audio_only(input_source, config.work_dir) if remote else resolve_local_input(input_source)
+
+    duration = probe_duration(source_for_analysis)
+    wav_path = extract_audio(source_for_analysis, config.work_dir / "audio.wav", config.sample_rate)
 
     energy = compute_energy_profile(wav_path)
     applause = compute_applause_score(wav_path)
@@ -63,9 +69,23 @@ def run_pipeline(input_source: str, config: ClipConfig) -> Path:
     clip_paths = []
     for i, r in enumerate(ranked):
         out_path = config.output_dir / f"clip_{i + 1:02d}.mp4"
+
+        if remote:
+            # Baja solo el rango [start, end] (absolutos, del directo original) de video
+            # para este clip. El archivo resultante empieza en el segundo 0, así que
+            # render_clip necesita un candidato con tiempos relativos a ese archivo —
+            # los tiempos absolutos originales se preservan intactos en metadata.json.
+            video_source = download_video_segment(
+                input_source, r.candidate.start, r.candidate.end, config.work_dir / f"clip_{i + 1:02d}_src.mp4"
+            )
+            render_candidate = replace(r.candidate, start=0.0, end=r.candidate.end - r.candidate.start)
+        else:
+            video_source = source_for_analysis
+            render_candidate = r.candidate
+
         try:
             render_clip(
-                local_path, r.candidate, out_path, config.output_width, config.output_height, config.crf,
+                video_source, render_candidate, out_path, config.output_width, config.output_height, config.crf,
                 r.subtitles_path,
             )
         except RuntimeError:
@@ -73,7 +93,9 @@ def run_pipeline(input_source: str, config: ClipConfig) -> Path:
                 raise
             warn(f"Fallo al renderizar el clip {i + 1} con subtítulos quemados; reintentando sin subtítulos.")
             r.subtitles_path = None
-            render_clip(local_path, r.candidate, out_path, config.output_width, config.output_height, config.crf)
+            render_clip(
+                video_source, render_candidate, out_path, config.output_width, config.output_height, config.crf
+            )
         clip_paths.append(out_path)
 
     metadata = build_metadata(ranked, {"input": input_source, "duration": duration}, clip_paths)

@@ -124,14 +124,23 @@ python main.py --input "<url>" --output-dir ./output --num-clips 3 \
 
 ## Qué genera
 
+Con una URL, **el directo completo nunca se descarga** (ver [¿Descarga el video completo?](#descarga-el-video-completo) más abajo):
+
 ```
-work/               # scratch: video descargado + audio.wav extraído (gitignored)
+work/
+├── source_audio.*    # solo audio del directo completo (gitignored)
+├── audio.wav          # audio mono 16kHz extraído, para el análisis
+├── clip_01_src.mp4     # solo el rango de video de este clip (unos pocos segundos)
+├── clip_02_src.mp4
+├── ...
 output/
 ├── clip_01.mp4      # 1080x1920, video H.264 + audio AAC
 ├── clip_02.mp4
 ├── ...
-└── metadata.json    # timestamps, score, título y fuente de señal por clip
+└── metadata.json    # timestamps (absolutos, del directo original), score, título y fuente de señal por clip
 ```
+
+Con un archivo local, `work/` solo tiene `audio.wav` — el archivo de entrada ya está completo en disco, así que se usa directamente para recortar cada clip, sin descargas de por medio.
 
 Ejemplo de `metadata.json`:
 
@@ -164,10 +173,21 @@ Sin la capa de IA (o si falló y cayó al fallback), `title` es genérico (`"Mom
 
 No. El pipeline funciona con **cualquier** URL soportada por `yt-dlp` o archivo local — videos normales de YouTube, no solo streams en vivo. Lo que sí está optimizado para música/conciertos es el *análisis de señal*: busca picos de energía sostenida (subidas musicales) y ruido de banda ancha (aplausos/vítores). En un video sin música ni aplausos (charla, tutorial, vlog) el pipeline no falla, pero los "momentos destacados" que encuentre serán simplemente las partes más fuertes de audio, no necesariamente las más interesantes del contenido.
 
+## ¿Descarga el video completo?
+
+No, y esto es importante para directos largos (1-4 horas pueden pesar varios GB). Con una URL, el pipeline nunca baja el archivo de video completo:
+
+1. Primero descarga **solo el audio** del directo entero (`ingest.py::download_audio_only`, formato `bestaudio`) — mucho más liviano que el video (unos pocos MB por hora en vez de varios GB). Con eso corre todo el análisis: energía/aplausos, y si `USE_AI_LAYER=true`, la transcripción con Whisper y el ranking con Gemini.
+2. Recién cuando ya se decidieron los clips finales, descarga **solo esos rangos de video** — uno por clip, unos pocos segundos cada uno — usando la opción de rangos de `yt-dlp` (`ingest.py::download_video_segment`, equivalente a `--download-sections`), en vez de todo el archivo.
+
+Con un archivo local no hay nada que optimizar (ya está completo en disco), así que se usa directamente tal cual, sin descargas.
+
 ## Arquitectura
 
 ```
-ingest.py         → resuelve la entrada: descarga con yt-dlp o usa archivo local
+ingest.py         → resuelve la entrada: para una URL, descarga solo audio (análisis) y
+                     luego solo los rangos de video de los clips finales; para un archivo
+                     local, lo usa directo
 audio_extract.py  → extrae audio mono 16kHz con ffmpeg
 energy.py         → energía RMS del audio (librosa)
 events.py         → heurística de aplausos/vítores (spectral flatness × RMS, sin IA)
@@ -192,7 +212,9 @@ Módulos planos, sin subpaquetes anidados salvo `llm/` (el adaptador intercambia
 pytest tests/ -v
 ```
 
-Incluye `test_llm_adapter.py` (parseo de la respuesta del LLM y adaptador de Gemini mockeado), `test_transcribe.py` (wrapper de faster-whisper mockeado) y `test_subtitles.py` (recorte/formato SRT), además de los dos casos E2E con `USE_AI_LAYER=true`: uno con la IA funcionando (mockeada) y otro simulando que falla, para confirmar que el pipeline cae al comportamiento de Fase 1 sin romperse.
+Incluye `test_llm_adapter.py` (parseo de la respuesta del LLM y adaptador de Gemini mockeado), `test_transcribe.py` (wrapper de faster-whisper mockeado), `test_subtitles.py` (recorte/formato SRT) y `test_ingest.py` (opciones exactas que se le pasan a `yt-dlp` para audio-only y para rangos de video, mockeado). A nivel E2E: los casos con `USE_AI_LAYER=true` (uno con la IA funcionando mockeada, otro simulando que falla, para confirmar que el pipeline cae al comportamiento de Fase 1 sin romperse) y `test_pipeline_url_input_never_downloads_full_stream`, que confirma que con una URL solo se llama una vez a la descarga de audio y una vez por clip a la descarga de video — nunca una descarga del directo completo.
+
+`tests/conftest.py` limpia las variables de entorno relacionadas a `clipengine` antes de cada test (vía `autouse` fixture), para que tu `.env` real (con tu `GEMINI_API_KEY`, `BURN_SUBTITLES`, etc.) nunca se filtre a los tests — siempre corren con los defaults del código salvo que el test los fije explícitamente.
 
 **2. Smoke test manual** con un video real corto (5-10 min, con música/aplausos si es posible):
 

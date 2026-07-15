@@ -49,12 +49,12 @@ La capa de razonamiento con IA es **opcional** y **agnóstica de proveedor**: el
 ## 3. Flujo del sistema, etapa por etapa
 
 ### 3.1 Entrada
-- Link de YouTube/Twitch → descarga con `yt-dlp`.
-- Archivo local → se usa directamente.
+- Link de YouTube/Twitch → descarga con `yt-dlp`, pero **nunca el directo completo** *(implementado)*: primero se baja solo el audio (formato `bestaudio`, liviano) para correr todo el análisis; recién cuando ya se decidieron los clips finales se descarga, por cada uno, solo su rango de video puntual (vía la opción de rangos de `yt-dlp`, equivalente a `--download-sections`). Un directo de 1-4 horas pesa varios GB en video completo pero solo unos pocos MB por hora en audio — evitar la descarga completa es relevante en ese volumen.
+- Archivo local → se usa directamente (ya está completo en disco, no hay nada que optimizar).
 - Si el directo fue en Twitch/YouTube Live, se descarga también el **replay del chat** (mensajes con timestamp) cuando esté disponible — es una señal gratuita y valiosa que se usa más adelante.
 
 ### 3.2 Extracción de audio
-- `ffmpeg` separa el audio del video (mono, 16 kHz) para que el análisis no tenga que cargar el video completo. Es rápido y no requiere GPU.
+- `ffmpeg` separa el audio (mono, 16 kHz) de la fuente de audio ya descargada (o del archivo local) para que el análisis no tenga que cargar el video completo. Es rápido y no requiere GPU.
 
 ### 3.3 Análisis de señales (motor de detección de momentos)
 Tres fuentes de señal, diseñadas para funcionar de forma independiente:
