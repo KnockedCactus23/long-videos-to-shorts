@@ -64,8 +64,10 @@ def download_video_segment(url: str, start: float, end: float, dest_path: Path) 
         "outtmpl": str(dest_path),
         "download_ranges": download_range_func(None, [(start, end)]),
         "force_keyframes_at_cuts": True,
-        "quiet": True,
-        "no_warnings": True,
+        # Sin quiet/no_warnings, yt-dlp muestra su barra de progreso nativa — para este
+        # rango, la descarga en sí implica un recodificado con ffmpeg (necesario para
+        # cortar en un punto exacto que no cae en un keyframe), que sin esto quedaba
+        # completamente silencioso hasta terminar.
         # Sin esto, yt-dlp no vuelve a descargar si ya existe un archivo con el mismo
         # nombre en work_dir (ej. de una corrida anterior con OTRO video/URL) — se
         # quedaría con el contenido viejo en silencio, sin avisar ni volver a bajar nada.

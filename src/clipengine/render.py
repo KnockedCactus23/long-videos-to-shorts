@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from clipengine.candidates import ClipCandidate
-from clipengine.proc import run
+from clipengine.proc import run_ffmpeg_with_progress
 
 
 def render_clip(
@@ -29,6 +29,7 @@ def render_clip(
         "-c:v", "libx264", "-preset", "medium", "-crf", str(crf), "-pix_fmt", "yuv420p",
         "-c:a", "aac", "-b:a", "192k",
         "-movflags", "+faststart",
+        "-progress", "pipe:1", "-nostats",
         str(out_path),
     ]
-    run(cmd)
+    run_ffmpeg_with_progress(cmd, duration, "Renderizando clip")
