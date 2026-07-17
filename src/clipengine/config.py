@@ -65,3 +65,18 @@ class ClipConfig:
     # burn_subtitles=False se sigue transcribiendo/rankeando con el LLM, pero no se
     # genera ni quema el .srt.
     burn_subtitles: bool = field(default_factory=lambda: _b("BURN_SUBTITLES", True))
+
+    # Publicación automática (Fase 3): redes de seguridad además de la elección explícita
+    # de plataforma en `clipengine publish <plataforma>` — en False, el comando se niega
+    # a publicar aunque se lo pidan.
+    publish_tiktok: bool = field(default_factory=lambda: _b("PUBLISH_TIKTOK", False))
+    publish_instagram: bool = field(default_factory=lambda: _b("PUBLISH_INSTAGRAM", False))
+    publish_poll_interval_seconds: float = field(default_factory=lambda: _f("PUBLISH_POLL_INTERVAL_SECONDS", 15))
+    publish_poll_timeout_seconds: float = field(default_factory=lambda: _f("PUBLISH_POLL_TIMEOUT_SECONDS", 300))
+    # Puerto del servidor local que recibe el callback de OAuth durante `clipengine auth
+    # <plataforma>` — debe coincidir con el redirect URI registrado en el dashboard de
+    # cada app (TikTok for Developers / Meta for Developers).
+    publish_oauth_port: int = field(default_factory=lambda: _i("PUBLISH_OAUTH_PORT", 8912))
+    publish_token_dir: Path = field(default_factory=lambda: Path(os.getenv(
+        "PUBLISH_TOKEN_DIR", str(Path.home() / ".config" / "clipengine" / "tokens")
+    )))

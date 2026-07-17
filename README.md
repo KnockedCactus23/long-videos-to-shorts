@@ -8,10 +8,11 @@ Replica lo que hacen herramientas como OpusClip/Vizard/Klap, pero:
 - **gratis en su núcleo**: el análisis de señal (energía + aplausos) corre 100% local, sin llamar a ningún servicio pago.
 - **la capa de IA es opcional**: transcripción (Whisper) + LLM (Gemini) para mejorar títulos, selección de momentos y subtítulos quemados — se activa con un flag, y si falla por cualquier motivo (sin API key, sin red, respuesta inválida) el pipeline **nunca se rompe**: cae de vuelta al comportamiento sin IA automáticamente.
 
-Ver `CLAUDE.md` para la propuesta completa de arquitectura y las fases futuras (señal de chat en standby, seguimiento visual, capa de revisión).
+Ver `CLAUDE.md` para la propuesta completa de arquitectura y las fases futuras (publicación automática, señal de chat en standby, seguimiento visual, capa de revisión).
 
-- **Fase 1 — núcleo sin IA**: implementada.
-- **Fase 2 — capa de IA opcional (transcripción con Whisper + Gemini)**: implementada.
+- **Fase 1 — núcleo sin IA**: [implementada.](#núcleo-sin-ia-fase-1)
+- **Fase 2 — capa de IA (transcripción con Whisper + Gemini)**: [implementada.](#capa-de-ia-fase-2)
+- **Fase 3 — publicación automática (TikTok + Instagram Reels)**: [implementada.](#publicación-automática-fase-3)
 
 ## Requisitos
 
@@ -63,7 +64,7 @@ Ver `CLAUDE.md` para la propuesta completa de arquitectura y las fases futuras (
    ```
    Si PowerShell bloquea la activación del entorno virtual (error de política de ejecución), corré una vez: `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
 
-### Capa de IA opcional (Fase 2, cualquier sistema operativo)
+### Capa de IA (Fase 2, cualquier sistema operativo)
 
 Para usar transcripción + Gemini instalá también el extra `ai` (`faster-whisper` + `google-genai`):
 
@@ -71,12 +72,28 @@ Para usar transcripción + Gemini instalá también el extra `ai` (`faster-whisp
 pip install -e ".[ai,dev]"
 ```
 
-Ver la sección [Capa de IA opcional (Fase 2)](#capa-de-ia-opcional-fase-2) más abajo para configurar la `GEMINI_API_KEY` y las variables relacionadas.
+Ver la sección [Capa de IA (Fase 2)](#capa-de-ia-fase-2) más abajo para configurar la `GEMINI_API_KEY` y las variables relacionadas.
+
+### Publicación automática (Fase 3, cualquier sistema operativo)
+
+Para publicar en TikTok/Instagram instalá el extra `publish` (`requests`):
+
+```bash
+pip install -e ".[publish,dev]"
+```
+
+Ver la sección [Publicación automática (Fase 3)](#publicación-automática-fase-3) más abajo para los prerequisitos de cada plataforma y las variables relacionadas.
 
 ## Uso
 
+La CLI tiene tres subcomandos: `run` (genera los clips), `publish` (sube clips ya generados a TikTok o Instagram, ver [Publicación automática](#publicación-automática-fase-3)) y `auth` (autoriza una plataforma la primera vez, ver la misma sección).
+
+### Núcleo sin IA (Fase 1)
+
+Es el comportamiento por defecto: corriendo `clipengine run` (o `python main.py run`) sin activar ninguna variable de `USE_AI_LAYER`/`PUBLISH_*`, el pipeline arma los clips solo con análisis de señal — energía RMS y aplausos/vítores (`librosa`, 100% local, sin ningún modelo de IA ni siquiera local) — y selecciona los `N` momentos de mayor score sin solaparse entre sí. Cada uno se recorta a 9:16 con `ffmpeg` y queda documentado en `metadata.json` con un título genérico (`"Momento destacado N"`). No requiere ninguna API key ni instalar ningún extra (`pip install -e ".[dev]"` alcanza) — es la base sobre la que se apoyan las Fases 2 y 3, y a la que el pipeline vuelve automáticamente si cualquiera de esas capas opcionales falla o está apagada.
+
 ```bash
-python main.py --input "<url_de_youtube_o_ruta_a_archivo>" --output-dir ./output --num-clips 3
+python main.py run --input "<url_de_youtube_o_ruta_a_archivo>" --output-dir ./output
 ```
 
 Flags disponibles:
@@ -91,13 +108,13 @@ Flags disponibles:
 
 Otros parámetros (duración objetivo, separación mínima entre clips, sensibilidad de detección de picos, pesos de las señales) se ajustan por variable de entorno o en un archivo `.env` — ver `.env.example` para la lista completa y sus defaults.
 
-### Capa de IA opcional (Fase 2)
+### Capa de IA (Fase 2)
 
 Con `USE_AI_LAYER=true`, el pipeline transcribe el audio con `faster-whisper` y le pasa la transcripción + los candidatos ya detectados a Gemini, que reordena/filtra y genera títulos y una razón por clip, además de quemar subtítulos en el video donde haya habla:
 
 ```bash
 export GEMINI_API_KEY=xxxx   # obtener en https://aistudio.google.com/apikey
-USE_AI_LAYER=true LLM_PROVIDER=gemini python main.py --input "<url_con_voz>" --output-dir ./output --num-clips 3
+USE_AI_LAYER=true LLM_PROVIDER=gemini python main.py run --input "<url_con_voz>" --output-dir ./output --num-clips 3
 ```
 
 El título/razón generados por Gemini quedan en `metadata.json` (campos `title`/`reason`), **no** en el nombre del archivo — los `.mp4` siempre se llaman `clip_01.mp4`, `clip_02.mp4`, etc., sea cual sea el resultado de la IA.
@@ -109,16 +126,63 @@ Si falta la API key, `google-genai`/`faster-whisper` no están instalados, hay u
 **Subtítulos opcionales**: quemar subtítulos es independiente de que la IA rankee/titule los clips — usa `BURN_SUBTITLES=false` para tener títulos/razones de Gemini sin que el pipeline intente grabar subtítulos en el video:
 
 ```bash
-USE_AI_LAYER=true LLM_PROVIDER=gemini BURN_SUBTITLES=false python main.py --input "<url>" --output-dir ./output
+USE_AI_LAYER=true LLM_PROVIDER=gemini BURN_SUBTITLES=false python main.py run --input "<url>" --output-dir ./output
 ```
+
+## Publicación automática (Fase 3)
+
+Sube clips ya generados (por `clipengine run`) a TikTok y/o Instagram Reels, sin re-subirlos a mano. Es un paso **separado y explícito**: `run` nunca publica nada por sí solo, y `publish` nunca genera clips — leé los `.mp4` que ya existen en `output_dir`. Cada corrida de `publish` toca **una sola plataforma** (la das como argumento); para las dos, corré el comando dos veces.
+
+### Prerequisitos manuales (una sola vez por plataforma)
+
+**TikTok:**
+1. Creá una app en [TikTok for Developers](https://developers.tiktok.com/) y agregale el producto **Content Posting API** + **Login Kit** — seguí la [guía oficial paso a paso](https://developers.tiktok.com/doc/content-posting-api-get-started) para completar los campos obligatorios (categoría, redirect URI, etc.).
+2. Anotá el `Client Key`/`Client Secret` en tu `.env` (`TIKTOK_CLIENT_KEY`, `TIKTOK_CLIENT_SECRET`).
+3. **Importante**: mientras tu app no pase la auditoría de TikTok, cualquier post que subas vía API queda forzado a `SELF_ONLY` (visible solo para vos), sin importar qué pida el código — es una restricción de la plataforma. Para hacerlo público tenés que cambiar la visibilidad a mano en la app de TikTok, o completar la auditoría para levantar la restricción de forma permanente.
+4. Para ver más detalles sobre cómo crear la app y usarla revisa [Guía Tiktok Developer App](tiktok-developer-app-guide.md).
+
+**Instagram (Reels):**
+1. Convertí la cuenta de Instagram a **Business o Creator** (una cuenta personal no tiene acceso a la API) y vinculala a una **Página de Facebook**.
+2. Creá una app en [Meta for Developers](https://developers.facebook.com/), agregale el producto **Instagram**, y agregá tu cuenta como **Instagram Tester** en el dashboard de la app (aceptá la invitación desde la cuenta de Instagram) — alcanza con esto para publicar en tu propia cuenta sin pasar por el App Review completo de Meta.
+3. Anotá `INSTAGRAM_APP_ID`, `INSTAGRAM_APP_SECRET` e `INSTAGRAM_BUSINESS_ACCOUNT_ID` en tu `.env`.
+4. **Importante**: a diferencia de TikTok, Instagram publica el Reel de inmediato y en público en cuanto la subida termina — la API no tiene un estado de borrador. No hay forma de deshacerlo desde acá una vez publicado.
+
+### Autorización (una sola vez por plataforma, o cuando el token vence)
+
+Al crear cada app (TikTok for Developers / Meta for Developers), registrá `http://localhost:8912/callback` como redirect URI — tiene que coincidir exacto con `PUBLISH_OAUTH_PORT` (default `8912` en `.env.example`; cambialo en ambos lados si el puerto ya está ocupado en tu máquina).
+
+```bash
+pip install -e ".[publish,dev]"   # agrega la dependencia requests
+clipengine auth tiktok
+clipengine auth instagram
+```
+
+Cada comando abre el navegador para que autorices tu cuenta; el token resultante se guarda en `~/.config/clipengine/tokens/` (configurable con `PUBLISH_TOKEN_DIR`) y se refresca solo en corridas futuras — no hace falta repetir `auth` salvo que el refresh token venza o lo revoques.
+
+### Publicar
+
+```bash
+PUBLISH_TIKTOK=true clipengine publish tiktok --output-dir ./output
+PUBLISH_INSTAGRAM=true clipengine publish instagram --output-dir ./output
+```
+
+Los flags `PUBLISH_TIKTOK`/`PUBLISH_INSTAGRAM` son una red de seguridad además de la elección explícita de plataforma: si están en `false` (default), `clipengine publish` se niega a publicar aunque se lo pidas. Otras opciones:
+
+| Flag | Descripción |
+|---|---|
+| `--clips 1,3,5` | Publica solo esos clips (numeración 1-indexada, la que ves en `output/clip_01.mp4`, etc.) en vez de todos |
+| `--force` | Vuelve a publicar aunque `publish_status.json` ya lo marque como exitoso |
+| `--dry-run` | Muestra qué se subiría, sin llamar a la API real — útil sobre todo para Instagram, que no tiene deshacer |
+
+El resultado de cada intento (éxito/error, id remoto, permalink) queda en `output_dir/publish_status.json` — **no** se mezcla con `metadata.json`, para que volver a correr `run` sobre la misma carpeta no borre el historial de publicaciones. Correr `publish` dos veces sobre el mismo clip/plataforma no duplica el post (se salta con un aviso) salvo que uses `--force`.
 
 ### Nota importante sobre los defaults
 
-Los valores por defecto (`CLIP_TARGET_DURATION=40`, `MIN_GAP_SECONDS=45`, `NUM_CLIPS=8`, etc.) están calibrados para un **directo de 1-4 horas**. Si pruebas con un video corto (unos pocos minutos), es probable que se generen menos clips de los que pediste con `--num-clips`, porque no hay espacio suficiente para encontrar picos separados por esa distancia. Para videos cortos, reduce esos valores, por ejemplo:
+Los valores por defecto (`CLIP_TARGET_DURATION=40`, `MIN_GAP_SECONDS=45`, `NUM_CLIPS=20`, etc.) están calibrados para un **directo de 1-4 horas**. Si pruebas con un video corto (unos pocos minutos), es probable que se generen menos clips de los que pediste con `--num-clips`, porque no hay espacio suficiente para encontrar picos separados por esa distancia. Para videos cortos, reduce esos valores, por ejemplo:
 
 ```bash
 CLIP_TARGET_DURATION=10 MIN_GAP_SECONDS=5 PEAK_PROMINENCE=0.02 \
-python main.py --input "<url>" --output-dir ./output --num-clips 3 \
+python main.py run --input "<url>" --output-dir ./output --num-clips 3 \
   --clip-min-duration 8 --clip-max-duration 15
 ```
 
@@ -137,7 +201,8 @@ output/
 ├── clip_01.mp4      # 1080x1920, video H.264 + audio AAC
 ├── clip_02.mp4
 ├── ...
-└── metadata.json    # timestamps (absolutos, del directo original), score, título y fuente de señal por clip
+├── metadata.json    # timestamps (absolutos, del directo original), score, título y fuente de señal por clip
+└── publish_status.json   # solo tras correr `clipengine publish` — resultado por clip/plataforma
 ```
 
 Con un archivo local, `work/` solo tiene `audio.wav` — el archivo de entrada ya está completo en disco, así que se usa directamente para recortar cada clip, sin descargas de por medio.
@@ -198,11 +263,13 @@ subtitles.py      → recorta/rebasea segmentos de transcripción por clip y esc
 llm/              → adaptador de LLM: prompt.py (prompt + parseo), gemini.py, dispatcher.py
 render.py         → recorta con ffmpeg: crop centrado a 9:16, reencode video + audio + subtítulos opcionales
 metadata.py       → escribe metadata.json
-pipeline.py       → orquesta todo el flujo (run_pipeline)
-cli.py / main.py  → interfaz de línea de comandos
+pipeline.py       → orquesta el flujo de generación (run_pipeline)
+publish/          → publicación (Fase 3): tiktok.py, instagram.py, runner.py (fan-out por
+                     clip), status.py (publish_status.json), tokens.py, oauth_server.py
+cli.py / main.py  → interfaz de línea de comandos (subcomandos run/publish/auth)
 ```
 
-Módulos planos, sin subpaquetes anidados salvo `llm/` (el adaptador intercambiable). Agregar un proveedor LLM nuevo (Ollama, Claude, OpenAI, Groq) es un módulo más en `llm/` + una entrada en `llm/dispatcher.py`, sin tocar el resto. La señal de chat (`use_chat_signal`) queda reservada en `config.py` pero en standby, sin implementar (ver `CLAUDE.md`).
+Módulos planos, sin subpaquetes anidados salvo `llm/` (el adaptador de proveedores de IA) y `publish/` (el adaptador de plataformas de publicación). Agregar un proveedor LLM nuevo (Ollama, Claude, OpenAI, Groq) es un módulo más en `llm/` + una entrada en `llm/dispatcher.py`; agregar una plataforma de publicación nueva es igual, en `publish/`. La señal de chat (`use_chat_signal`) queda reservada en `config.py` pero en standby, sin implementar (ver `CLAUDE.md`).
 
 ## Probar que funciona
 
@@ -219,7 +286,7 @@ Incluye `test_llm_adapter.py` (parseo de la respuesta del LLM y adaptador de Gem
 **2. Smoke test manual** con un video real corto (5-10 min, con música/aplausos si es posible):
 
 ```bash
-python main.py --input "<url_corta>" --output-dir ./output_test --num-clips 3
+python main.py run --input "<url_corta>" --output-dir ./output_test --num-clips 3
 ```
 
 ### Qué observar al probar
@@ -251,3 +318,7 @@ brew link --overwrite ffmpeg-full
 Mientras tanto, el pipeline detecta el fallo de ffmpeg al quemar subtítulos y **reintenta automáticamente el clip sin ellos** — no se rompe, pero `has_subtitles` en `metadata.json` reflejará `false` para esos clips aunque sí hubiera transcripción disponible.
 
 **La IA no mejora nada y los títulos siguen siendo genéricos**: revisa el mensaje de aviso en stderr (`[clipengine] Aviso: ...`) — casi siempre es `GEMINI_API_KEY` no configurada, `google-genai`/`faster-whisper` no instalados (`pip install -e ".[ai]"`), o el LLM devolvió una respuesta que no se pudo parsear como JSON. En cualquier caso `ai_enhanced` queda en `false` en el JSON, y eso es el comportamiento esperado de degradación, no un error a corregir.
+
+**`clipengine publish` falla con un error de token vencido/revocado**: los tokens de TikTok/Instagram rotan y expiran — si el refresh automático también falla (por ejemplo, no usaste el pipeline en varias semanas y el refresh token venció), correr `clipengine auth <plataforma>` de nuevo resuelve el login desde cero.
+
+**Publiqué en TikTok pero no lo veo público / solo yo lo veo**: esperado si tu app de TikTok todavía no pasó la auditoría — cualquier post vía API queda forzado a `SELF_ONLY` (privado) sin importar la configuración. No es un fallo del pipeline; cambiá la visibilidad a mano en la app de TikTok, o completá la auditoría para que deje de pasar.

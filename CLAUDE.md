@@ -2,7 +2,7 @@
 
 ## 1. Objetivo
 
-Construir un sistema propio, gratuito en su núcleo, que reciba un directo musical de ~1 hora (link o archivo) y produzca automáticamente varios clips verticales (9:16) listos para TikTok/Reels/Shorts — replicando lo que hacen OpusClip/Vizard/Klap, pero adaptado a contenido musical (algo que esas herramientas comerciales no cubren bien) y sin costos de suscripción.
+Construir un sistema propio, gratuito en su núcleo, que reciba un directo musical de entre 1-4 horas (link o archivo) y produzca automáticamente varios clips verticales (9:16) listos para TikTok/Reels/Shorts — replicando lo que hacen OpusClip/Vizard/Klap, pero adaptado a contenido musical (algo que esas herramientas comerciales no cubren bien) y sin costos de suscripción.
 
 La capa de razonamiento con IA es **opcional** y **agnóstica de proveedor**: el sistema debe producir clips razonables únicamente con análisis de señal (gratis, sin llamar a ningún LLM), y mejorar su calidad de selección/naming si se activa la capa de IA — sea con Claude, Gemini, OpenAI, un modelo local, o cualquier otro proveedor compatible.
 
@@ -83,7 +83,7 @@ Tres fuentes de señal, diseñadas para funcionar de forma independiente:
 
 ### 3.6 Salida
 - Clips en `.mp4`, formato 9:16.
-- Un archivo JSON con metadata de cada clip (inicio, fin, score, título, fuente de la señal que lo generó) — *implementado hoy*; pensado para que, más adelante, la capa de revisión (React/Supabase, Fase 4, **no implementada todavía**) pueda mostrarlos antes de publicar.
+- Un archivo JSON con metadata de cada clip (inicio, fin, score, título, fuente de la señal que lo generó) — *implementado hoy*; pensado para que, más adelante, la capa de revisión (React/Supabase, Fase 5, **no implementada todavía**) pueda mostrarlos antes de publicar.
 
 ---
 
@@ -173,8 +173,8 @@ Lo que **no** se reutiliza de ese proyecto:
 ## 7. Stack técnico propuesto
 
 - **Worker de análisis y recorte** *(implementado, Fases 1-2)*: Python (`yt-dlp`, `librosa`, `faster-whisper` opcional, `ffmpeg` vía `subprocess`), más un adaptador de LLM intercambiable — hoy solo con el SDK oficial de Gemini; un cliente HTTP local para Ollama es diseño previsto (sección 4.3), no código existente.
-- **Orquestación / metadata / revisión** *(Fase 4, no implementada)*: Node.js + Supabase, siguiendo el mismo patrón que ya usas para tu librería de clips — cada directo procesado generaría un registro con sus clips candidatos, y una interfaz en React para revisar/aprobar antes de publicar. Hoy la única salida es el `metadata.json` local descrito en la sección 3.6.
-- **Salida** *(Fase 4, no implementada)*: archivos `.mp4` en almacenamiento (local o Supabase Storage) + tabla de metadata en Supabase. Hoy los `.mp4` y el `metadata.json` quedan solo en el filesystem local (`output_dir`).
+- **Orquestación / metadata / revisión** *(Fase 5, no implementada)*: Node.js + Supabase, siguiendo el mismo patrón que ya usas para tu librería de clips — cada directo procesado generaría un registro con sus clips candidatos, y una interfaz en React para revisar/aprobar antes de publicar. Hoy la única salida es el `metadata.json` local descrito en la sección 3.6.
+- **Salida** *(Fase 5, no implementada)*: archivos `.mp4` en almacenamiento (local o Supabase Storage) + tabla de metadata en Supabase. Hoy los `.mp4` y el `metadata.json` quedan solo en el filesystem local (`output_dir`).
 
 ---
 
@@ -210,7 +210,30 @@ Cada fase tiene criterios de aceptación concretos y verificables (código + tes
 
 **Pendiente dentro del alcance original de esta fase** (no bloquea el estado "implementada", que se definió explícitamente solo para Gemini): agregar Ollama y otros proveedores (Claude, OpenAI, Groq) al mismo adaptador — sección 4.3.
 
-### Fase 3 — Seguimiento visual (reencuadre dinámico) *(no iniciada)*
+### Fase 3 — Publicación automática (TikTok + Instagram Reels) *(implementada)*
+
+Cerrar el último tramo manual: subir los clips ya generados directamente a TikTok y/o Instagram Reels desde la línea de comandos, sin re-subirlos a mano por cada plataforma. Es un **comando separado y explícito** (`clipengine publish <plataforma>`), desacoplado de la generación de clips (`clipengine run`) — genera y publica siguen siendo dos pasos distintos, lo que da un punto de revisión natural (mirar los `.mp4` en `output_dir`) sin necesitar todavía la UI de la Fase 5.
+
+La plataforma se elige de forma explícita y separada en cada corrida (`clipengine publish tiktok ...` o `clipengine publish instagram ...`); no existe un modo que publique en ambas a la vez en una sola invocación — para las dos, se corre el comando dos veces.
+
+**Hechos de plataforma que condicionan el diseño** (verificados julio 2026):
+- **TikTok** (Content Posting API): subida directa del archivo local en chunks, sin necesitar hosting público. Mientras la app no pase la auditoría de TikTok, **cualquier** post queda forzado a `SELF_ONLY` (privado) sin importar lo que pida el código — restricción de la plataforma, no un bug del pipeline.
+- **Instagram** (Graph API, Reels): requiere cuenta Business/Creator vinculada a una Página de Facebook y una app de Meta (alcanza con modo Development + la cuenta como "Instagram Tester" para este caso de uso de una sola cuenta propia). Subida directa (resumable) también sin hosting público. A diferencia de TikTok, **publica de inmediato y en público — la API no tiene estado de borrador**.
+
+**Criterios de aceptación:**
+- [x] `clipengine publish` es un comando separado de `clipengine run`; correr `run` nunca dispara una publicación.
+- [x] `clipengine publish` siempre requiere indicar una plataforma explícita (`tiktok` o `instagram`) como argumento; no existe un modo que publique en ambas dentro de la misma corrida.
+- [x] Con `PUBLISH_TIKTOK=false` y `PUBLISH_INSTAGRAM=false` (default), `clipengine publish <plataforma>` no dispara ninguna llamada de red real, sea cual sea la plataforma pedida.
+- [x] Adaptador por plataforma (`publish/tiktok.py`, `publish/instagram.py`) con la misma interfaz — agregar una plataforma nueva no requiere tocar el runner más que registrarla.
+- [x] Subida directa del archivo local (chunked en TikTok, resumable en Instagram) — nunca requiere hosting público intermedio.
+- [x] Autorización OAuth interactiva (`clipengine auth <plataforma>`) con protección CSRF (validación de `state`), y refresco automático de tokens en corridas no interactivas de `publish`.
+- [x] Un fallo puntual en un clip (token vencido, red, rate limit, timeout de polling) nunca aborta el resto de la corrida.
+- [x] Resultados registrados en `publish_status.json` (no en `metadata.json`, para no acoplar `run` y `publish`); correr `publish` dos veces no duplica posts salvo `--force`.
+- [x] Documentado explícitamente que TikTok, sin auditar la app, publica en `SELF_ONLY` — no es un bug del pipeline.
+- [x] Documentado explícitamente que Instagram publica de inmediato y en público, sin estado de borrador — de ahí `--dry-run`.
+- [x] Cubierto por tests con HTTP completamente mockeado (sin red, sin credenciales reales, 51 tests nuevos en `tests/test_publish_*.py` + `tests/test_cli.py`), incluyendo que un clip fallido no bloquee los demás.
+
+### Fase 4 — Seguimiento visual (reencuadre dinámico) *(no iniciada)*
 
 Detectar y seguir a las personas en el plano (quién está hablando, el grupo completo) para mover el crop 9:16 dinámicamente según lo que ocurre en escena, en vez del crop centrado fijo de la Fase 1 — útil cuando el grupo/DJ no está centrado en el escenario.
 
@@ -220,7 +243,7 @@ Detectar y seguir a las personas en el plano (quién está hablando, el grupo co
 - [ ] Cubierto por un test que verifique que el crop realmente se mueve entre frames cuando el sujeto no está centrado (no solo que el clip se genera).
 - [ ] Documentado en el README con su propio flag y comportamiento de fallback.
 
-### Fase 4 — Capa de revisión *(no iniciada)*
+### Fase 5 — Capa de revisión *(no iniciada)*
 
 Interfaz en React/Supabase para ver los clips candidatos, sus scores/títulos, y aprobar/descartar antes de publicar.
 

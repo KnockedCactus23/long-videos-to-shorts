@@ -15,6 +15,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
 ai = ["faster-whisper>=1.0", "google-genai>=2.0"]
+publish = ["requests>=2.31"]
 
 [project.scripts]
 clipengine = "clipengine.cli:main"
