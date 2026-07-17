@@ -22,10 +22,10 @@ La capa de razonamiento con IA es **opcional** y **agnóstica de proveedor**: el
  ┌─────────▼─────────────────────────────────────────┐
  │ 3. Análisis de señales (en paralelo)                │
  │                                                      │
- │  a) Energía de audio         b) Chat / clips de      │
+ │  a) Energía + aplausos       b) Chat / clips de      │
  │     (librosa, siempre activo)   plataforma           │
- │                                  (si hay datos)       │
- │                                                       │
+ │                                  (en standby, no      │
+ │                                   implementada)       │
  │  c) [OPCIONAL] Whisper + LLM                         │
  │     transcripción + razonamiento sobre contexto      │
  │     (proveedor configurable)                          │
@@ -51,7 +51,7 @@ La capa de razonamiento con IA es **opcional** y **agnóstica de proveedor**: el
 ### 3.1 Entrada
 - Link de YouTube/Twitch → descarga con `yt-dlp`, pero **nunca el directo completo** *(implementado)*: primero se baja solo el audio (formato `bestaudio`, liviano) para correr todo el análisis; recién cuando ya se decidieron los clips finales se descarga, por cada uno, solo su rango de video puntual (vía la opción de rangos de `yt-dlp`, equivalente a `--download-sections`). Un directo de 1-4 horas pesa varios GB en video completo pero solo unos pocos MB por hora en audio — evitar la descarga completa es relevante en ese volumen.
 - Archivo local → se usa directamente (ya está completo en disco, no hay nada que optimizar).
-- Si el directo fue en Twitch/YouTube Live, se descarga también el **replay del chat** (mensajes con timestamp) cuando esté disponible — es una señal gratuita y valiosa que se usa más adelante.
+- *(En standby, no implementado — ver sección 8)* Si el directo fue en Twitch/YouTube Live, la idea original era descargar también el **replay del chat** (mensajes con timestamp) como señal adicional gratuita. Se pospuso porque el chat no suele ser lo bastante activo en estos directos como para aportar señal útil; el pipeline hoy no descarga ni usa datos de chat en ningún punto.
 
 ### 3.2 Extracción de audio
 - `ffmpeg` separa el audio (mono, 16 kHz) de la fuente de audio ya descargada (o del archivo local) para que el análisis no tenga que cargar el video completo. Es rápido y no requiere GPU.
@@ -61,17 +61,20 @@ Tres fuentes de señal, diseñadas para funcionar de forma independiente:
 
 | Señal | Herramienta | ¿Requiere IA generativa? | ¿Siempre disponible? |
 |---|---|---|---|
-| Energía de audio (picos RMS, aplausos/vítores) | `librosa` + clasificador de eventos de audio (YAMNet/PANNs, gratuitos, corren local) | No | Sí, siempre |
-| Chat / clips ya creados por la audiencia | API de Twitch/YouTube | No | Solo si el directo tuvo chat público |
+| Energía de audio (picos RMS) | `librosa` (RMS) | No | Sí, siempre |
+| Aplausos/vítores | `librosa` — heurística de ruido de banda ancha (spectral flatness alta) × energía sostenida (RMS alto) | No | Sí, siempre |
+| Chat / clips ya creados por la audiencia | API de Twitch/YouTube | No | **En standby, no implementada** — ver sección 8 |
 | Transcripción + razonamiento contextual | `faster-whisper` (gratis, local) + **LLM configurable** (opcional) | Sí, la parte de razonamiento | Solo si se activa la opción de IA |
 
+> **Nota (implementación real, difiere de la propuesta inicial)**: para la detección de aplausos se descartó a propósito un clasificador de eventos de audio tipo YAMNet/PANNs — esa ruta exige TensorFlow/PyTorch como dependencia pesada solo para una señal que, en la práctica, se resuelve bien con una heurística de señal (spectral flatness × RMS) sin ningún modelo de aprendizaje profundo. Mantiene la Fase 1 100% libre de dependencias de IA, incluso locales. Ver `src/clipengine/events.py`.
+
 ### 3.4 Fusión y selección
-- Las señales sin IA (energía + chat) se normalizan y se combinan en una sola curva de "interés" por segundo. Los picos locales de esa curva son los clips candidatos — esto **ya funciona sin gastar un centavo en IA**.
+- Las señales sin IA (energía + aplausos — la señal de chat de la tabla anterior está en standby y no participa en la fusión) se normalizan y se combinan en una sola curva de "interés" por segundo. Los picos locales de esa curva son los clips candidatos — esto **ya funciona sin gastar un centavo en IA**.
 - Si la capa de IA está activada, el LLM configurado recibe la transcripción + los timestamps de los picos ya detectados, y:
   - Reordena/filtra los candidatos usando el contexto (ej. "la banda anuncia que toca su tema más conocido").
   - Genera un título/hook sugerido para cada clip.
   - Da una breve razón de por qué ese momento es interesante (similar al "Virality Score" de OpusClip, pero explicado en texto).
-- Si la capa de IA está desactivada, el sistema simplemente ordena los candidatos por el score de energía/chat y genera un título genérico (ej. "Momento destacado 1", con el timestamp).
+- Si la capa de IA está desactivada, el sistema simplemente ordena los candidatos por el score de energía/aplausos y genera un título genérico (ej. "Momento destacado 1", con el timestamp).
 
 ### 3.5 Recorte con FFmpeg
 - Corte del segmento (`-ss` / `-to`, reencodeado para precisión de frame).
@@ -80,7 +83,7 @@ Tres fuentes de señal, diseñadas para funcionar de forma independiente:
 
 ### 3.6 Salida
 - Clips en `.mp4`, formato 9:16.
-- Un archivo JSON con metadata de cada clip (inicio, fin, score, título, fuente de la señal que lo generó) para que la capa de revisión (React/Supabase) pueda mostrarlos antes de publicar.
+- Un archivo JSON con metadata de cada clip (inicio, fin, score, título, fuente de la señal que lo generó) — *implementado hoy*; pensado para que, más adelante, la capa de revisión (React/Supabase, Fase 4, **no implementada todavía**) pueda mostrarlos antes de publicar.
 
 ---
 
@@ -126,6 +129,8 @@ LLM_PROVIDER = "gemini" | "groq" | "ollama" | "openai" | "claude" | ...
 
 Cada proveedor implementa la misma interfaz (`rank_and_title(transcript, candidate_timestamps) -> list[clip]`), y el resto del pipeline no necesita saber cuál está activo. Agregar un proveedor nuevo es escribir una función más, sin tocar el resto del sistema.
 
+> **Estado actual**: de esa lista, solo `"gemini"` está implementado (`src/clipengine/llm/gemini.py`, registrado en `llm/dispatcher.py`). `"groq"`, `"ollama"`, `"openai"` y `"claude"` son el diseño previsto para el adaptador, no código que exista hoy — si se configura `LLM_PROVIDER` con cualquiera de esos valores, el dispatcher no falla ni lanza una excepción: detecta que el proveedor no está registrado, avisa por stderr y cae a la selección por señal pura, exactamente igual que si `USE_AI_LAYER=false`.
+
 ---
 
 ## 5. Diseño para que la IA sea opcional
@@ -137,13 +142,13 @@ USE_AI_LAYER = true | false
 LLM_PROVIDER = "gemini" | "groq" | "ollama" | "openai" | "claude"   # solo relevante si USE_AI_LAYER=true
 ```
 
-| | `USE_AI_LAYER=false` (por defecto, gratis) | `USE_AI_LAYER=true` (requiere configurar un proveedor) |
+| | `USE_AI_LAYER=false` (por defecto, gratis) | `USE_AI_LAYER=true` (requiere configurar Gemini — único proveedor implementado hoy, ver sección 4.3) |
 |---|---|---|
-| Selección de momentos | Solo señal (energía + chat) | Señal + razonamiento del LLM sobre la transcripción |
+| Selección de momentos | Solo señal (energía + aplausos) | Señal + razonamiento del LLM sobre la transcripción |
 | Títulos de los clips | Genéricos (timestamp) | Generados con contexto ("hook" sugerido) |
 | Subtítulos | No (no hay transcripción) | Sí, quemados desde la transcripción de Whisper |
-| Costo adicional | $0 | $0 a centavos por directo, según el proveedor elegido (ver sección 4.2) |
-| Requiere | Solo librerías locales | Una API key (o Ollama instalado localmente) |
+| Costo adicional | $0 | $0 a centavos por directo con Gemini (ver sección 4.2) |
+| Requiere | Solo librerías locales | Una API key de Gemini (`GEMINI_API_KEY`) |
 
 El sistema debe funcionar de punta a punta con `USE_AI_LAYER=false` — la IA es una mejora, no una dependencia. Esto también significa que la parte de Whisper (transcripción) solo se ejecuta si la capa de IA está activada, ya que sin un LLM esa transcripción no se usa para nada.
 
@@ -160,25 +165,70 @@ Como referencia de arquitectura (no como base que se vaya a clonar ni depender d
 
 Lo que **no** se reutiliza de ese proyecto:
 - Su dependencia de MuAPI (servicio de pago de terceros) — nuestro pipeline no la necesita.
-- Su lógica de selección de momentos, orientada a diálogo — se reemplaza por el motor de señales musicales (energía, aplausos, chat) descrito en la sección 3.3.
+- Su lógica de selección de momentos, orientada a diálogo — se reemplaza por el motor de señales musicales descrito en la sección 3.3 (energía + aplausos, implementados; la señal de chat de esa misma sección sigue en standby).
 - Su reencuadre por seguimiento de rostro — se reemplaza por un crop centrado, más adecuado para un escenario o set de DJ.
 
 ---
 
 ## 7. Stack técnico propuesto
 
-- **Worker de análisis y recorte**: Python (`yt-dlp`, `librosa`, `faster-whisper` opcional, `ffmpeg` vía `subprocess`, más un adaptador de LLM intercambiable — SDK oficial del proveedor elegido, o cliente HTTP local si se usa Ollama).
-- **Orquestación / metadata / revisión**: Node.js + Supabase, siguiendo el mismo patrón que ya usas para tu librería de clips — cada directo procesado genera un registro con sus clips candidatos, y una interfaz en React para revisar/aprobar antes de publicar.
-- **Salida**: archivos `.mp4` en almacenamiento (local o Supabase Storage) + tabla de metadata en Supabase.
+- **Worker de análisis y recorte** *(implementado, Fases 1-2)*: Python (`yt-dlp`, `librosa`, `faster-whisper` opcional, `ffmpeg` vía `subprocess`), más un adaptador de LLM intercambiable — hoy solo con el SDK oficial de Gemini; un cliente HTTP local para Ollama es diseño previsto (sección 4.3), no código existente.
+- **Orquestación / metadata / revisión** *(Fase 4, no implementada)*: Node.js + Supabase, siguiendo el mismo patrón que ya usas para tu librería de clips — cada directo procesado generaría un registro con sus clips candidatos, y una interfaz en React para revisar/aprobar antes de publicar. Hoy la única salida es el `metadata.json` local descrito en la sección 3.6.
+- **Salida** *(Fase 4, no implementada)*: archivos `.mp4` en almacenamiento (local o Supabase Storage) + tabla de metadata en Supabase. Hoy los `.mp4` y el `metadata.json` quedan solo en el filesystem local (`output_dir`).
 
 ---
 
 ## 8. Fases de implementación sugeridas
 
-1. **Fase 1 — Núcleo sin IA** *(implementada)*: entrada, extracción de audio, análisis de energía/aplausos, fusión, recorte con FFmpeg, salida. Funciona de punta a punta sin ninguna llamada a un LLM.
-2. **Fase 2 — Capa de IA opcional** *(implementada)*: Whisper (transcripción local) + adaptador de LLM intercambiable, detrás del flag `USE_AI_LAYER`, con generación de títulos/hooks, razones y subtítulos quemados. Implementación inicial solo con **Gemini** como proveedor (decisión explícita: se dejó Ollama fuera de esta fase). Ollama y otros proveedores (Claude, OpenAI, Groq) quedan como opciones futuras del mismo adaptador, sin cambiar el resto del sistema.
-3. **Fase 3 — Seguimiento visual (reencuadre dinámico)**: detectar y seguir a las personas en el plano (quién está hablando, el grupo completo) para mover el crop 9:16 dinámicamente según lo que ocurre en escena, en vez del crop centrado fijo de la Fase 1 — útil cuando el grupo/DJ no está centrado en el escenario.
-4. **Fase 4 — Capa de revisión**: interfaz en React/Supabase para ver los clips candidatos, sus scores/títulos, y aprobar/descartar antes de publicar.
+Cada fase tiene criterios de aceptación concretos y verificables (código + tests automatizados). Una fase se marca *(implementada)* solo cuando todos sus criterios están cumplidos; el estado se revisa contra el código real, no contra la intención original.
+
+### Fase 1 — Núcleo sin IA *(implementada)*
+
+**Criterios de aceptación:**
+- [x] Acepta como entrada tanto una URL (`yt-dlp`) como un archivo local.
+- [x] Con una URL, nunca descarga el directo completo: primero solo audio (`download_audio_only`) para el análisis, y video solo por el rango puntual de cada clip final ya decidido (`download_video_segment`).
+- [x] Extrae audio mono 16 kHz vía `ffmpeg` para que el análisis no dependa del video completo.
+- [x] Calcula una señal de energía (RMS, `librosa`) y una señal de aplausos/vítores, ambas sin ningún modelo de IA.
+- [x] Fusiona ambas señales en una curva de interés, la suaviza y detecta picos locales.
+- [x] Selecciona los `N` clips finales sin solape entre sí (NMS / `min_gap_seconds`).
+- [x] Recorta cada clip con `ffmpeg`, reencuadre 9:16 por crop centrado, reencode de video + audio.
+- [x] Genera `metadata.json` con timestamps, score, título (genérico en esta fase) y fuente de la señal, por clip.
+- [x] Con `USE_AI_LAYER=false` (default), el pipeline corre de punta a punta sin ninguna llamada a un LLM ni a Whisper.
+- [x] Un fallo puntual al descargar/renderizar un clip (ej. glitch transitorio de red) no aborta el resto de la corrida — se reintenta y, si sigue fallando, se omite ese clip y se sigue con los demás.
+- [x] Cubierto por un test end-to-end real (`tests/test_pipeline_e2e.py::test_pipeline_end_to_end`), con `ffmpeg` real sobre un video sintético, sin red ni mocks de la etapa de señal/recorte.
+
+### Fase 2 — Capa de IA opcional *(implementada, solo proveedor Gemini)*
+
+**Criterios de aceptación:**
+- [x] Flag `USE_AI_LAYER` apagado por defecto; con el flag apagado el comportamiento es idéntico a Fase 1 (ni Whisper ni el LLM se ejecutan).
+- [x] Transcripción local con `faster-whisper`, condicionada estrictamente a `USE_AI_LAYER=true`.
+- [x] Adaptador de LLM intercambiable (`llm/dispatcher.py` + diccionario de proveedores), con **Gemini** como único proveedor implementado (decisión explícita — Ollama, Claude, OpenAI y Groq quedan pendientes, ver más abajo).
+- [x] El LLM reordena/filtra candidatos y genera título + razón por clip, sin reemplazar la selección sin-solape de Fase 1 (que sigue siendo una restricción física de renderizado, no delegable a texto generado).
+- [x] Ante cualquier fallo de la capa de IA — sin API key, `google-genai`/`faster-whisper` no instalados, error de red, timeout, respuesta que no parsea como JSON válido, proveedor no soportado — el pipeline no lanza excepción ni aborta la corrida: cae de vuelta al comportamiento de Fase 1 (señal pura + título genérico) y deja un aviso por stderr.
+- [x] Subtítulos quemados solo si hubo transcripción y `BURN_SUBTITLES=true`; si el burn-in falla (ej. `ffmpeg` sin `libass`), se reintenta automáticamente el mismo clip sin subtítulos en vez de perder el clip entero.
+- [x] Cubierto por tests con la capa de IA mockeada — sin red, sin API key real, sin descargar modelos: `test_pipeline_end_to_end_with_ai_layer_mocked`, `test_pipeline_ai_ranking_with_subtitles_disabled`, `test_pipeline_falls_back_when_llm_raises` (`tests/test_pipeline_e2e.py`), más `tests/test_llm_adapter.py`, `tests/test_transcribe.py` y `tests/test_subtitles.py`.
+
+**Pendiente dentro del alcance original de esta fase** (no bloquea el estado "implementada", que se definió explícitamente solo para Gemini): agregar Ollama y otros proveedores (Claude, OpenAI, Groq) al mismo adaptador — sección 4.3.
+
+### Fase 3 — Seguimiento visual (reencuadre dinámico) *(no iniciada)*
+
+Detectar y seguir a las personas en el plano (quién está hablando, el grupo completo) para mover el crop 9:16 dinámicamente según lo que ocurre en escena, en vez del crop centrado fijo de la Fase 1 — útil cuando el grupo/DJ no está centrado en el escenario.
+
+**Criterios de aceptación (a cumplir antes de marcarla implementada):**
+- [ ] El reencuadre dinámico es opcional (flag propio) y, si está apagado o falla, el pipeline cae al crop centrado de Fase 1 sin romperse — mismo principio que `USE_AI_LAYER`.
+- [ ] Funciona sin depender de que la capa de IA generativa (Fase 2) esté activa.
+- [ ] Cubierto por un test que verifique que el crop realmente se mueve entre frames cuando el sujeto no está centrado (no solo que el clip se genera).
+- [ ] Documentado en el README con su propio flag y comportamiento de fallback.
+
+### Fase 4 — Capa de revisión *(no iniciada)*
+
+Interfaz en React/Supabase para ver los clips candidatos, sus scores/títulos, y aprobar/descartar antes de publicar.
+
+**Criterios de aceptación (a cumplir antes de marcarla implementada):**
+- [ ] Cada directo procesado genera un registro en Supabase con sus clips candidatos y su `metadata.json` asociado.
+- [ ] La interfaz React permite listar los clips de una corrida, reproducirlos, y ver score/título/razón/fuente de señal.
+- [ ] Permite aprobar o descartar cada clip individualmente antes de que se considere "publicable".
+- [ ] No depende de que la Fase 2 (IA) esté activa — debe poder revisar corridas generadas solo con señal (títulos genéricos).
 
 **En standby**: señal de chat (Twitch/YouTube) como fuente adicional de score (antes Fase 2) — se pospone porque el chat no es lo suficientemente activo en estos directos como para aportar una señal útil; se retoma si eso cambia.
 
